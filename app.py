@@ -111,7 +111,7 @@ with c1:
     except Exception:
         pass
 with c2:
-    st.markdown('<div class="tv-title">Painel TV — Atingimento da Meta (Pastas Abertas)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="tv-title">Painel TV — Meta Pastas Abertas</div>', unsafe_allow_html=True)
     st.markdown('<div class="tv-sub">Ranking por escritório • Só percentual • Pode passar de 100%</div>', unsafe_allow_html=True)
 
 # ========= Uploads =========
