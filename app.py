@@ -2,7 +2,6 @@ import io
 import numpy as np
 import pandas as pd
 import streamlit as st
-import plotly.express as px
 
 # ========= Config =========
 SUBTIPOS_PASTAS_ABERTAS_PADRAO = [
@@ -17,16 +16,28 @@ COL_STATUS = "Status"
 COL_SUBTIPO = "Subtipo"
 COL_ESCRITORIO = "Escritório responsável"
 
-# ========= App =========
 st.set_page_config(page_title="Molina | Painel TV", layout="wide")
 
-# Tela cheia (esconde header e sidebar)
+# Tela limpa (TV)
 st.markdown(
     """
     <style>
       header {visibility: hidden;}
       section[data-testid="stSidebar"] {display: none;}
-      .block-container {padding-top: 0.8rem; padding-bottom: 0.8rem;}
+      .block-container {padding-top: 1rem; padding-bottom: 1rem; max-width: 1400px;}
+      .tv-title {font-size: 34px; font-weight: 700; margin: 0;}
+      .tv-sub {opacity: 0.75; margin-top: 2px; margin-bottom: 18px;}
+      .row {display: grid; grid-template-columns: 260px 1fr 80px; gap: 18px;
+            align-items: center; padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.06);}
+      .name {font-size: 18px; font-weight: 600;}
+      .pct {font-size: 18px; font-weight: 700; text-align: right;}
+      .track {position: relative; height: 18px; border-radius: 10px; background: rgba(0,0,0,0.08); overflow: hidden;}
+      .fill {position: absolute; height: 100%; left: 0; top: 0; border-radius: 10px;}
+      .marker {position: absolute; top: -6px; width: 2px; height: 30px; background: rgba(0,0,0,0.35); left: 62.5%;}
+      /* marker em 100% quando max_bar=160%  => 100/160 = 62.5% */
+      .legend {display: flex; gap: 14px; align-items: center; margin: 14px 0 4px;}
+      .dot {width: 10px; height: 10px; border-radius: 50%;}
+      .small {font-size: 13px; opacity: 0.75;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -49,7 +60,6 @@ def validar_colunas(df: pd.DataFrame) -> None:
         st.stop()
 
 def carregar_metas(meta_file) -> pd.DataFrame:
-    # precisa ter: Escritório responsável | Meta Pastas Abertas
     meta_df = pd.read_excel(meta_file)
 
     col_escr = None
@@ -83,29 +93,28 @@ def template_metas_xlsx() -> bytes:
         temp.to_excel(writer, index=False, sheet_name="Meta")
     return buf.getvalue()
 
-def faixa(pct: float) -> str:
-    if pd.isna(pct):
-        return "SEM META"
+def cor_por_pct(pct: float) -> str:
+    # cores só para a barra (sem precisar mostrar números)
+    if np.isnan(pct):
+        return "rgba(0,0,0,0.25)"   # sem meta
     if pct < 70:
-        return "ABAIXO 70%"
+        return "#E74C3C"           # vermelho
     if pct < 100:
-        return "70–99%"
-    return "100%+"
+        return "#F1C40F"           # amarelo
+    return "#2ECC71"               # verde
 
-# ========= Topo (logo + título) =========
-top_l, top_r = st.columns([1, 5], vertical_alignment="center")
-with top_l:
+# ========= Cabeçalho =========
+c1, c2 = st.columns([1, 5], vertical_alignment="center")
+with c1:
     try:
         st.image("logo_molina.png", use_container_width=True)
     except Exception:
         pass
-with top_r:
-    st.markdown("## Painel TV — Atingimento da Meta (Pastas Abertas)")
-    st.caption("Em Porcentagem")
+with c2:
+    st.markdown('<div class="tv-title">Painel TV — Atingimento da Meta (Pastas Abertas)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="tv-sub">Ranking por escritório • Só percentual • Pode passar de 100%</div>', unsafe_allow_html=True)
 
-st.divider()
-
-# ========= Uploads (ficam no corpo, sem sidebar) =========
+# ========= Uploads =========
 u1, u2, u3 = st.columns([3, 3, 2], vertical_alignment="bottom")
 with u1:
     arquivo_base = st.file_uploader("Planilha Pastas Abertas (Legal One) — .xlsx", type=["xlsx"])
@@ -113,17 +122,17 @@ with u2:
     arquivo_metas = st.file_uploader("Planilha de Metas — .xlsx", type=["xlsx"])
 with u3:
     st.download_button(
-        "Baixar modelo de metas",
+        "Modelo de metas",
         data=template_metas_xlsx(),
         file_name="metas_pastas_abertas_modelo.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
 if not arquivo_base or not arquivo_metas:
-    st.info("Envie **as duas planilhas** (Pastas Abertas e Metas) para exibir o painel.")
+    st.info("Envie **as duas planilhas** para exibir o painel.")
     st.stop()
 
-# ========= Leitura =========
+# ========= Leitura/Regra =========
 df = pd.read_excel(arquivo_base)
 validar_colunas(df)
 
@@ -131,76 +140,74 @@ df = df.copy()
 df[COL_DATA_CONCLUSAO] = parse_datetime_safe(df[COL_DATA_CONCLUSAO])
 df["Escritorio_exibicao"] = df[COL_ESCRITORIO].map(limpar_nome_escritorio)
 
-meta_df = carregar_metas(arquivo_metas)
-
-# ========= Filtro fixo (somente regras de Pastas Abertas) =========
-# Status: Cumprido
+# Status = Cumprido
 f = df[df[COL_STATUS].astype(str).str.lower() == "cumprido"].copy()
 
-# Subtipos padrão (os que existirem na planilha)
+# Subtipos padrão (se existirem)
 subtipos_unicos = set(f[COL_SUBTIPO].dropna().astype(str).unique().tolist())
 subtipos_sel = [s for s in SUBTIPOS_PASTAS_ABERTAS_PADRAO if s in subtipos_unicos]
 if subtipos_sel:
     f = f[f[COL_SUBTIPO].astype(str).isin(subtipos_sel)].copy()
 
-# ========= Agregação =========
+# Agrega por escritório
 resumo = (
     f.groupby([COL_ESCRITORIO, "Escritorio_exibicao"])
      .size()
      .reset_index(name="Pastas Abertas")
 )
 
+# Junta com metas
+meta_df = carregar_metas(arquivo_metas)
 join = resumo.merge(meta_df, on=COL_ESCRITORIO, how="left")
 join["Meta Pastas Abertas"] = join["Meta Pastas Abertas"].fillna(0).astype(float)
 
-join["% Atingido"] = np.where(
+join["pct"] = np.where(
     join["Meta Pastas Abertas"] > 0,
     (join["Pastas Abertas"] / join["Meta Pastas Abertas"]) * 100.0,
     np.nan
 )
 
-# Ordena por percentual
-join = join.sort_values("% Atingido", ascending=False)
+# Ranking por percentual
+join = join.sort_values("pct", ascending=False)
 
-# Cap visual alto para não estourar
-join["% cap"] = join["% Atingido"].clip(upper=250)
-join["Faixa"] = join["% Atingido"].apply(faixa)
-
-# Texto grande no final da barra
-texto_pct = join["% Atingido"].round(0).astype("Int64").astype(str) + "%"
-
-# Altura proporcional (ocupa a tela melhor)
-altura = max(650, 42 * len(join))
-
-fig = px.bar(
-    join,
-    y="Escritorio_exibicao",
-    x="% cap",
-    color="Faixa",
-    orientation="h",
-    text=texto_pct,
+# ========= Legenda (boa posição) =========
+st.markdown(
+    """
+    <div class="legend">
+      <span class="dot" style="background:#E74C3C"></span><span class="small">Abaixo 70%</span>
+      <span class="dot" style="background:#F1C40F"></span><span class="small">70–99%</span>
+      <span class="dot" style="background:#2ECC71"></span><span class="small">100% ou mais</span>
+      <span class="dot" style="background:rgba(0,0,0,0.25)"></span><span class="small">Sem meta</span>
+      <span class="small" style="margin-left:auto;">Linha marca a meta (100%)</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
-fig.update_traces(textposition="outside", cliponaxis=False)
+# ========= Render “barra percentual” =========
+MAX_BAR = 160.0  # barra visual vai até 160% (mas o número continua real)
 
-fig.update_layout(
-    title=dict(text="Atingimento da meta por escritório", x=0.0),
-    height=altura,
-    margin=dict(l=10, r=80, t=60, b=10),
-    yaxis_title="",
-    xaxis_title="% da meta",
-    legend=dict(
-        orientation="h",
-        yanchor="bottom",
-        y=1.02,
-        xanchor="right",
-        x=1.0
-    ),
-)
+for _, row in join.iterrows():
+    nome = row["Escritorio_exibicao"]
+    pct = row["pct"]
+    pct_txt = "--%" if np.isnan(pct) else f"{int(round(pct))}%"
 
-# Eixo X até 250% (ajuste se quiser mais)
-fig.update_xaxes(range=[0, 250])
+    # largura visual (cap)
+    w = 0 if np.isnan(pct) else max(0.0, min(100.0, (pct / MAX_BAR) * 100.0))
+    cor = cor_por_pct(pct)
 
-st.plotly_chart(fig, use_container_width=True)
+    st.markdown(
+        f"""
+        <div class="row">
+          <div class="name">{nome}</div>
+          <div class="track">
+            <div class="fill" style="width:{w}%; background:{cor};"></div>
+            <div class="marker"></div>
+          </div>
+          <div class="pct">{pct_txt}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-st.caption("Dica para TV: aperte **F11** no navegador para tela cheia.")
+st.markdown('<div class="small" style="margin-top:12px;">Dica: na TV, aperte <b>F11</b> para tela cheia.</div>', unsafe_allow_html=True)
